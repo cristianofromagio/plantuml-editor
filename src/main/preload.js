@@ -18,6 +18,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   readFileBase64: (filePath) => ipcRenderer.invoke('fs:readFileBase64', filePath),
   writeFile: (filePath, content) => ipcRenderer.invoke('fs:writeFile', filePath, content),
   fileExists: (filePath) => ipcRenderer.invoke('fs:fileExists', filePath),
+  createDirectory: (dirPath) => ipcRenderer.invoke('fs:createDirectory', dirPath),
+  removeFile: (filePath) => ipcRenderer.invoke('fs:removeFile', filePath),
+  removeDirectory: (dirPath) => ipcRenderer.invoke('fs:removeDirectory', dirPath),
+  moveItem: (src, dest) => ipcRenderer.invoke('fs:moveItem', src, dest),
 
   // PlantUML
   renderPlantUML: (source, format, cwd) => ipcRenderer.invoke('plantuml:render', source, format, cwd),

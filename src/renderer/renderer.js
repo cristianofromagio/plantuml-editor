@@ -31,7 +31,9 @@
     languageCompartment: null,
     _currentFileForZoom: null,
     _toastTimeout: null,
-    _previousSource: ''
+    _previousSource: '',
+    contextMenuPath: null,
+    contextMenuType: null // 'file' or 'directory'
   };
 
   // ============================================
@@ -55,6 +57,40 @@
   document.getElementById('btn-collapse-all').addEventListener('click', collapseAllFolders);
   document.getElementById('btn-toggle-sidebar').addEventListener('click', () => toggleSidebar());
   document.getElementById('btn-refresh-folder').addEventListener('click', () => refreshFolder());
+  document.getElementById('btn-new-file').addEventListener('click', () => handleNewFile(state.currentFolder));
+  document.getElementById('btn-new-folder').addEventListener('click', () => handleNewFolder(state.currentFolder));
+
+  // Context Menu Global Handlers
+  document.getElementById('ctx-new-file').addEventListener('click', () => {
+    handleNewFile(state.contextMenuPath, state.contextMenuType);
+    hideContextMenu();
+  });
+  document.getElementById('ctx-new-folder').addEventListener('click', () => {
+    handleNewFolder(state.contextMenuPath, state.contextMenuType);
+    hideContextMenu();
+  });
+  document.getElementById('ctx-delete').addEventListener('click', () => {
+    handleDelete(state.contextMenuPath, state.contextMenuType);
+    hideContextMenu();
+  });
+  document.getElementById('btn-open-explorer').addEventListener('click', () => {
+    if (state.currentFolder) window.electronAPI.openPath(state.currentFolder);
+  });
+
+  document.getElementById('ctx-open-explorer').addEventListener('click', () => {
+    window.electronAPI.openPath(state.contextMenuPath);
+    hideContextMenu();
+  });
+
+  document.getElementById('ctx-rename').addEventListener('click', () => {
+    handleRename(state.contextMenuPath, state.contextMenuType);
+    hideContextMenu();
+  });
+
+  window.addEventListener('click', () => hideContextMenu());
+  window.addEventListener('contextmenu', (e) => {
+    if (!e.target.closest('.tree-item')) hideContextMenu();
+  });
 
   // ============================================
   // Immediately bind preview controls
@@ -137,6 +173,14 @@
     if (e.ctrlKey && e.key === 'o') { e.preventDefault(); openFolderDialog(); }
     if (e.ctrlKey && e.key === 's') { e.preventDefault(); saveCurrentFile(); }
     if (e.ctrlKey && e.key === ',') { e.preventDefault(); openSettings(); }
+    if (e.ctrlKey && e.shiftKey && e.key === 'E') {
+      e.preventDefault();
+      if (state.currentFile) {
+        window.electronAPI.openPath(getFileDirectory(state.currentFile));
+      } else if (state.currentFolder) {
+        window.electronAPI.openPath(state.currentFolder);
+      }
+    }
     if (e.key === 'Escape') { closeSettings(); }
   });
 
@@ -219,6 +263,13 @@
         const exists = await window.electronAPI.fileExists(state.config.lastOpenedFolder);
         if (exists) {
           await openFolder(state.config.lastOpenedFolder);
+          
+          if (state.config.lastOpenedFile) {
+            const fileExists = await window.electronAPI.fileExists(state.config.lastOpenedFile);
+            if (fileExists) {
+              await openFile(state.config.lastOpenedFile);
+            }
+          }
         }
       }
 
@@ -405,6 +456,7 @@
         const header = document.createElement('div');
         header.className = 'tree-item';
         header.style.paddingLeft = (12 + depth * 16) + 'px';
+        header.draggable = true;
         header.innerHTML = `
           <span class="tree-item-expand">
             <svg width="10" height="10" viewBox="0 0 10 10"><path d="M3 1l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
@@ -423,6 +475,56 @@
           childContainer.classList.toggle('expanded');
         });
 
+        header.addEventListener('contextmenu', (e) => {
+          showContextMenu(e, item.path, 'directory');
+        });
+
+        // Drag and Drop for Directory
+        header.addEventListener('dragstart', (e) => {
+          e.dataTransfer.setData('text/plain', item.path);
+          e.dataTransfer.setData('item-type', 'directory');
+          e.dataTransfer.effectAllowed = 'move';
+          e.stopPropagation();
+        });
+
+        header.addEventListener('dragover', (e) => {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+          header.classList.add('drag-over');
+          e.stopPropagation();
+        });
+
+        header.addEventListener('dragleave', (e) => {
+          header.classList.remove('drag-over');
+          e.stopPropagation();
+        });
+
+        header.addEventListener('drop', async (e) => {
+          e.preventDefault();
+          header.classList.remove('drag-over');
+          e.stopPropagation();
+          const srcPath = e.dataTransfer.getData('text/plain');
+          if (!srcPath || srcPath === item.path) return;
+
+          const name = srcPath.split(/[\\/]/).pop();
+          const sep = item.path.includes('\\') ? '\\' : '/';
+          const destPath = item.path + (item.path.endsWith(sep) ? '' : sep) + name;
+
+          if (srcPath === destPath) return;
+
+          const result = await window.electronAPI.moveItem(srcPath, destPath);
+          if (result.success) {
+            if (state.currentFile === srcPath) {
+              state.currentFile = destPath;
+              window.electronAPI.setConfig('lastOpenedFile', destPath);
+            }
+            await refreshFolder();
+            showToast('Moved successfully', 'success');
+          } else {
+            showToast('Move failed: ' + result.error, 'error');
+          }
+        });
+
         if (item.children && item.children.length > 0) {
           childContainer.appendChild(buildTreeDOM(item.children, depth + 1));
         }
@@ -437,11 +539,25 @@
         fileEl.style.paddingLeft = (28 + depth * 16) + 'px';
         fileEl.dataset.path = item.path;
         fileEl.dataset.ext = ext;
+        fileEl.draggable = true;
         fileEl.innerHTML = `
           <span class="tree-item-icon">${getFileIcon(ext)}</span>
           <span class="tree-item-name">${escapeHtml(item.name)}</span>
         `;
+        
         fileEl.addEventListener('click', () => openFile(item.path, item.name));
+        fileEl.addEventListener('contextmenu', (e) => {
+          showContextMenu(e, item.path, 'file');
+        });
+
+        // Drag for File
+        fileEl.addEventListener('dragstart', (e) => {
+          e.dataTransfer.setData('text/plain', item.path);
+          e.dataTransfer.setData('item-type', 'file');
+          e.dataTransfer.effectAllowed = 'move';
+          e.stopPropagation();
+        });
+
         fragment.appendChild(fileEl);
       }
     }
@@ -468,6 +584,8 @@
     if (state.isModified && state.currentFile) {
       await saveCurrentFile();
     }
+    
+    window.electronAPI.setConfig('lastOpenedFile', filePath);
 
     const ext = getFileExtension(filePath);
     const imgExts = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico', 'bmp'];
@@ -575,6 +693,235 @@
         <span class="tab-name">${escapeHtml(fileName)}</span>
       </div>
     `;
+  }
+
+  function showContextMenu(e, path, type) {
+    e.preventDefault();
+    state.contextMenuPath = path;
+    state.contextMenuType = type;
+    const menu = document.getElementById('context-menu');
+    menu.style.left = e.pageX + 'px';
+    menu.style.top = e.pageY + 'px';
+    menu.classList.remove('hidden');
+  }
+
+  function hideContextMenu() {
+    document.getElementById('context-menu').classList.add('hidden');
+  }
+
+  function showPrompt(title, placeholder, value = '') {
+    return new Promise((resolve) => {
+      const overlay = document.getElementById('prompt-overlay');
+      const titleEl = document.getElementById('prompt-title');
+      const input = document.getElementById('prompt-input');
+      const okBtn = document.getElementById('btn-prompt-ok');
+      const cancelBtn = document.getElementById('btn-prompt-cancel');
+
+      titleEl.textContent = title;
+      input.placeholder = placeholder || 'Enter name...';
+      input.value = value;
+      overlay.classList.remove('hidden');
+      input.focus();
+      input.select();
+
+      const onOk = () => {
+        cleanup();
+        resolve(input.value);
+      };
+
+      const onCancel = () => {
+        cleanup();
+        resolve(null);
+      };
+
+      const onKeyDown = (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          onOk();
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          onCancel();
+        }
+      };
+
+      const cleanup = () => {
+        overlay.classList.add('hidden');
+        okBtn.removeEventListener('click', onOk);
+        cancelBtn.removeEventListener('click', onCancel);
+        input.removeEventListener('keydown', onKeyDown);
+      };
+
+      okBtn.oneClick = okBtn.onclick; // Backup if needed, but we use listeners
+      okBtn.addEventListener('click', onOk);
+      cancelBtn.addEventListener('click', onCancel);
+      input.addEventListener('keydown', onKeyDown);
+    });
+  }
+
+  async function handleNewFile(targetPath, type) {
+    if (!state.currentFolder) {
+      showToast('Open a folder first', 'error');
+      return;
+    }
+
+    // Determine parent directory
+    let parentDir = targetPath || state.currentFolder;
+    if (type === 'file') {
+      parentDir = getFileDirectory(targetPath);
+    }
+
+    const fileName = await showPrompt('New File', 'Enter file name (e.g. diagram.puml)');
+    if (!fileName || !fileName.trim()) return;
+
+    const sep = parentDir.includes('\\') ? '\\' : '/';
+    const filePath = parentDir + (parentDir.endsWith(sep) ? '' : sep) + fileName.trim();
+
+    // Check if file exists
+    const exists = await window.electronAPI.fileExists(filePath);
+    if (exists) {
+      showToast('File already exists', 'error');
+      return;
+    }
+
+    const result = await window.electronAPI.writeFile(filePath, '');
+    if (result.success) {
+      await refreshFolder();
+      showToast('File created', 'success');
+      // Open the file immediately
+      openFile(filePath, fileName);
+    } else {
+      showToast('Failed to create file: ' + result.error, 'error');
+    }
+  }
+
+  async function handleNewFolder(targetPath, type) {
+    if (!state.currentFolder) {
+      showToast('Open a folder first', 'error');
+      return;
+    }
+
+    // Determine parent directory
+    let parentDir = targetPath || state.currentFolder;
+    if (type === 'file') {
+      parentDir = getFileDirectory(targetPath);
+    }
+
+    const folderName = await showPrompt('New Folder', 'Enter folder name');
+    if (!folderName || !folderName.trim()) return;
+
+    const sep = parentDir.includes('\\') ? '\\' : '/';
+    const dirPath = parentDir + (parentDir.endsWith(sep) ? '' : sep) + folderName.trim();
+
+    // Check if folder exists
+    const exists = await window.electronAPI.fileExists(dirPath);
+    if (exists) {
+      showToast('Folder already exists', 'error');
+      return;
+    }
+
+    const result = await window.electronAPI.createDirectory(dirPath);
+    if (result.success) {
+      await refreshFolder();
+      showToast('Folder created', 'success');
+    } else {
+      showToast('Failed to create folder: ' + result.error, 'error');
+    }
+  }
+
+  async function showConfirm(title, message, okText = 'Delete', okClass = 'btn-danger') {
+    return new Promise((resolve) => {
+      const overlay = document.getElementById('confirm-overlay');
+      const titleEl = document.getElementById('confirm-title');
+      const messageEl = document.getElementById('confirm-message');
+      const okBtn = document.getElementById('btn-confirm-ok');
+      const cancelBtn = document.getElementById('btn-confirm-cancel');
+
+      titleEl.textContent = title;
+      messageEl.textContent = message;
+      okBtn.textContent = okText;
+      okBtn.className = okClass;
+      overlay.classList.remove('hidden');
+
+      const onOk = () => { cleanup(); resolve(true); };
+      const onCancel = () => { cleanup(); resolve(false); };
+      const onKeyDown = (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); onOk(); }
+        if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
+      };
+
+      const cleanup = () => {
+        overlay.classList.add('hidden');
+        okBtn.removeEventListener('click', onOk);
+        cancelBtn.removeEventListener('click', onCancel);
+        window.removeEventListener('keydown', onKeyDown);
+      };
+
+      okBtn.addEventListener('click', onOk);
+      cancelBtn.addEventListener('click', onCancel);
+      window.addEventListener('keydown', onKeyDown);
+    });
+  }
+
+  async function handleRename(path, type) {
+    if (!path) return;
+    const oldName = path.split(/[\\/]/).pop();
+    const newName = await showPrompt('Rename', 'Enter new name', oldName);
+    
+    if (!newName || !newName.trim() || newName === oldName) return;
+
+    const parentDir = getFileDirectory(path);
+    const sep = parentDir.includes('\\') ? '\\' : '/';
+    const newPath = parentDir + (parentDir.endsWith(sep) ? '' : sep) + newName.trim();
+
+    // Check if new path already exists
+    const exists = await window.electronAPI.fileExists(newPath);
+    if (exists) {
+      showToast('Name already exists', 'error');
+      return;
+    }
+
+    const result = await window.electronAPI.moveItem(path, newPath);
+    if (result.success) {
+      if (state.currentFile === path) {
+        state.currentFile = newPath;
+        window.electronAPI.setConfig('lastOpenedFile', newPath);
+      }
+      await refreshFolder();
+      showToast('Item renamed', 'success');
+    } else {
+      showToast('Rename failed: ' + result.error, 'error');
+    }
+  }
+
+  async function handleDelete(path, type) {
+    if (!path) return;
+    const itemName = path.split(/[\\/]/).pop();
+    const confirmed = await showConfirm(
+      'Delete ' + (type === 'directory' ? 'Folder' : 'File'),
+      `Are you sure you want to delete "${itemName}"? This action cannot be undone.`
+    );
+
+    if (confirmed) {
+      const result = type === 'directory' 
+        ? await window.electronAPI.removeDirectory(path)
+        : await window.electronAPI.removeFile(path);
+
+      if (result.success) {
+        // If the deleted file was open, clear the editor
+        if (state.currentFile === path) {
+          state.currentFile = null;
+          if (state.editorView) state.editorView.dom.style.display = 'none';
+          document.getElementById('editor-empty').classList.remove('hidden');
+          document.getElementById('editor-empty').innerHTML = '<div class="empty-state"><p>No file open</p></div>';
+          hidePreview();
+        }
+        await refreshFolder();
+        showToast('Item deleted', 'success');
+      } else {
+        showToast('Delete failed: ' + result.error, 'error');
+      }
+    }
   }
 
   // ============================================

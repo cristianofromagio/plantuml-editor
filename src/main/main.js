@@ -189,8 +189,58 @@ ipcMain.handle('fs:writeFile', async (_, filePath, content) => {
   }
 });
 
-ipcMain.handle('fs:fileExists', async (_, filePath) => {
+ipcMain.handle( 'fs:fileExists' , async (_, filePath) => {
   return fs.existsSync(filePath);
+});
+
+ipcMain.handle('fs:createDirectory', async (_, dirPath) => {
+  try {
+    if (!fs.existsSync(dirPath)) {
+      fs.mkdirSync(dirPath, { recursive: true });
+    }
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('fs:removeFile', async (_, filePath) => {
+  try {
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('fs:removeDirectory', async (_, dirPath) => {
+  try {
+    if (fs.existsSync(dirPath)) {
+      fs.rmSync(dirPath, { recursive: true, force: true });
+    }
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('fs:moveItem', async (_, src, dest) => {
+  try {
+    if (fs.existsSync(src)) {
+      // Ensure destination directory exists (can be same as source for rename)
+      const destDir = path.dirname(dest);
+      if (!fs.existsSync(destDir)) {
+        fs.mkdirSync(destDir, { recursive: true });
+      }
+      fs.renameSync(src, dest);
+      return { success: true };
+    }
+    return { success: false, error: 'Source does not exist' };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
 });
 
 // ---- PlantUML Rendering ----
