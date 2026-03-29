@@ -142,3 +142,21 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+!playwright.config.js
+!tests/
+
+# Playwright browsers (downloaded binaries)
+ms-playwright/
+
+# Playwright test results
+test-results/
+
+# Playwright reports
+playwright-report/
+
+# Playwright traces/screenshots/videos
+trace.zip
+*.trace
+*.zip
+test-results/**
