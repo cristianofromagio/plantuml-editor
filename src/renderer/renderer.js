@@ -8,10 +8,10 @@
   // State
   // ============================================
   const state = {
-    currentFile: null,
+    tabs: [], // { path, name, isPermanent, isModified, content, scrollState, cursorPosition, isImage }
+    activeTabIndex: -1,
     currentFolder: null,
     fileTree: [],
-    isModified: false,
     config: {},
     zoom: 1,
     panX: 0,
@@ -25,16 +25,19 @@
     editorView: null,
     previewImageData: null,
     cmReady: false,
+    isSettingContent: false,
     textWrap: false,
     sidebarCollapsed: false,
-    isImageMode: false,
     languageCompartment: null,
-    _currentFileForZoom: null,
     _toastTimeout: null,
-    _previousSource: '',
     contextMenuPath: null,
     contextMenuType: null // 'file' or 'directory'
   };
+
+  // Helper to get active tab
+  function getActiveTab() {
+    return state.tabs[state.activeTabIndex] || null;
+  }
 
   // ============================================
   // Immediately bind window controls (no async dependency)
@@ -42,8 +45,16 @@
   document.getElementById('btn-minimize').addEventListener('click', () => window.electronAPI.minimize());
   document.getElementById('btn-maximize').addEventListener('click', () => window.electronAPI.maximize());
   document.getElementById('btn-close').addEventListener('click', async () => {
-    if (state.isModified && state.currentFile) {
-      await saveCurrentFile();
+    // Check for any modified tabs
+    const modifiedTabs = state.tabs.filter(t => t.isModified);
+    if (modifiedTabs.length > 0) {
+      const confirm = await showConfirm(
+        'Unsaved Changes',
+        `You have ${modifiedTabs.length} file(s) with unsaved changes. Close anyway?`,
+        'Close Anyway',
+        'btn-danger'
+      );
+      if (!confirm) return;
     }
     window.electronAPI.close();
   });
@@ -175,8 +186,9 @@
     if (e.ctrlKey && e.key === ',') { e.preventDefault(); openSettings(); }
     if (e.ctrlKey && e.shiftKey && e.key === 'E') {
       e.preventDefault();
-      if (state.currentFile) {
-        window.electronAPI.openPath(getFileDirectory(state.currentFile));
+      const activeTab = getActiveTab();
+      if (activeTab) {
+        window.electronAPI.openPath(getFileDirectory(activeTab.path));
       } else if (state.currentFolder) {
         window.electronAPI.openPath(state.currentFolder);
       }
@@ -257,17 +269,29 @@
       showToast('Failed to load code editor bundle.', 'error');
     }
 
-    // Auto-reopen last folder
+    // Auto-reopen last folder and tabs
     try {
       if (state.config.lastOpenedFolder) {
         const exists = await window.electronAPI.fileExists(state.config.lastOpenedFolder);
         if (exists) {
           await openFolder(state.config.lastOpenedFolder);
           
-          if (state.config.lastOpenedFile) {
+          if (state.config.openFiles && Array.isArray(state.config.openFiles)) {
+             for (const filePath of state.config.openFiles) {
+                const fileExists = await window.electronAPI.fileExists(filePath);
+                if (fileExists) {
+                  await openFile(filePath, null, true); // Open as permanent
+                }
+             }
+             if (state.config.activeFile) {
+                const index = state.tabs.findIndex(t => t.path === state.config.activeFile);
+                if (index !== -1) switchTab(index);
+             }
+          } else if (state.config.lastOpenedFile) {
+            // Legacy support
             const fileExists = await window.electronAPI.fileExists(state.config.lastOpenedFile);
             if (fileExists) {
-              await openFile(state.config.lastOpenedFile);
+              await openFile(state.config.lastOpenedFile, null, true);
             }
           }
         }
@@ -383,9 +407,20 @@
           { key: 'Mod-s', run: () => { saveCurrentFile(); return true; } }
         ]),
         EditorView.updateListener.of((update) => {
-          if (update.docChanged && state.currentFile) {
-            setModified(true);
-            scheduleRender();
+          if (update.docChanged && !state.isSettingContent) {
+            const activeTab = getActiveTab();
+            if (activeTab) {
+              activeTab.content = update.state.doc.toString();
+              if (!activeTab.isModified) {
+                activeTab.isModified = true;
+                if (!activeTab.isPermanent) {
+                  activeTab.isPermanent = true;
+                }
+                updateTabBar();
+                updateStatusBar();
+              }
+              scheduleRender();
+            }
           }
         })
       ]
@@ -402,9 +437,11 @@
 
   function setEditorContent(content) {
     if (!state.editorView) return;
+    state.isSettingContent = true;
     state.editorView.dispatch({
       changes: { from: 0, to: state.editorView.state.doc.length, insert: content }
     });
+    state.isSettingContent = false;
   }
 
   function getEditorContent() {
@@ -545,7 +582,8 @@
           <span class="tree-item-name">${escapeHtml(item.name)}</span>
         `;
         
-        fileEl.addEventListener('click', () => openFile(item.path, item.name));
+        fileEl.addEventListener('click', () => openFile(item.path, item.name, false));
+        fileEl.addEventListener('dblclick', () => makeTabPermanentByPath(item.path));
         fileEl.addEventListener('contextmenu', (e) => {
           showContextMenu(e, item.path, 'file');
         });
@@ -580,16 +618,22 @@
   // ============================================
   // File Operations
   // ============================================
-  async function openFile(filePath, fileName) {
-    if (state.isModified && state.currentFile) {
-      await saveCurrentFile();
+  async function openFile(filePath, fileName, permanent = false) {
+    // Find if already open
+    const existingIndex = state.tabs.findIndex(t => t.path === filePath);
+    if (existingIndex !== -1) {
+      if (permanent) state.tabs[existingIndex].isPermanent = true;
+      switchTab(existingIndex);
+      return;
     }
-    
-    window.electronAPI.setConfig('lastOpenedFile', filePath);
 
+    const name = fileName || filePath.split(/[\\/]/).pop();
     const ext = getFileExtension(filePath);
     const imgExts = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico', 'bmp'];
     const isImage = imgExts.includes(ext);
+
+    let content = '';
+    let dataUrl = null;
 
     if (isImage) {
       const result = await window.electronAPI.readFileBase64(filePath);
@@ -597,37 +641,101 @@
         showToast('Failed to open image: ' + result.error, 'error');
         return;
       }
-      state.isImageMode = true;
-      state.currentFile = filePath;
-      showPreviewImage(result.dataUrl);
-      if (state.editorView) state.editorView.dom.style.display = 'none';
-      document.getElementById('editor-empty').classList.remove('hidden');
-      document.getElementById('editor-empty').innerHTML = `
-        <div class="empty-state">
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:0.3">
-            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
-          </svg>
-          <p>Previewing Image: ${fileName || filePath.split(/[\\/]/).pop()}</p>
-        </div>
-      `;
+      dataUrl = result.dataUrl;
     } else {
       const result = await window.electronAPI.readFile(filePath);
       if (!result.success) {
         showToast('Failed to open file: ' + result.error, 'error');
         return;
       }
-      state.isImageMode = false;
-      state.currentFile = filePath;
-      setModified(false);
+      content = result.content;
+    }
 
+    // Handle temporary tab logic
+    if (!permanent) {
+      const tempIndex = state.tabs.findIndex(t => !t.isPermanent && !t.isModified);
+      if (tempIndex !== -1) {
+        // Replace temporary tab
+        state.tabs[tempIndex] = {
+          path: filePath,
+          name,
+          isPermanent: false,
+          isModified: false,
+          content,
+          dataUrl,
+          isImage,
+          scrollState: null,
+          cursorPosition: null
+        };
+        switchTab(tempIndex);
+        return;
+      }
+    }
+
+    // Add new tab
+    state.tabs.push({
+      path: filePath,
+      name,
+      isPermanent: permanent,
+      isModified: false,
+      content,
+      dataUrl,
+      isImage,
+      scrollState: null,
+      cursorPosition: null
+    });
+    switchTab(state.tabs.length - 1);
+  }
+
+  function switchTab(index) {
+    if (index < 0 || index >= state.tabs.length) return;
+    
+    // Save current tab state if switching
+    const prevTab = getActiveTab();
+    if (prevTab && !prevTab.isImage && state.editorView) {
+      prevTab.scrollState = state.editorView.scrollDOM.scrollTop;
+      prevTab.cursorPosition = state.editorView.state.selection.main.head;
+    }
+
+    state.activeTabIndex = index;
+    const tab = state.tabs[index];
+
+    // Update UI
+    if (tab.isImage) {
+      showPreviewImage(tab.dataUrl);
+      if (state.editorView) state.editorView.dom.style.display = 'none';
+      const emptyEl = document.getElementById('editor-empty');
+      emptyEl.classList.remove('hidden');
+      emptyEl.innerHTML = `
+        <div class="empty-state">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:0.3">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
+          </svg>
+          <p>Previewing Image: ${tab.name}</p>
+        </div>
+      `;
+    } else {
       if (state.editorView) {
         state.editorView.dom.style.display = '';
-        setEditorContent(result.content);
+        setEditorContent(tab.content);
+        
+        // Restore scroll and cursor
+        if (tab.scrollState !== null) {
+          setTimeout(() => {
+            state.editorView.scrollDOM.scrollTop = tab.scrollState;
+            if (tab.cursorPosition !== null) {
+              state.editorView.dispatch({
+                selection: { anchor: tab.cursorPosition }
+              });
+            }
+          }, 0);
+        }
 
         // Reconfigure language
-        const { json, StreamLanguage } = window.CM;
+        const ext = getFileExtension(tab.path);
+        const { json } = window.CM;
         let langExt;
-        const trimmed = result.content.trim();
+        const trimmed = tab.content.trim();
         const isJson = ext === 'json' || (ext === 'txt' && (trimmed.startsWith('{') || trimmed.startsWith('[')));
 
         if (isJson) {
@@ -643,56 +751,165 @@
       document.getElementById('editor-empty').classList.add('hidden');
     }
 
-    // Update tab bar
-    updateTabBar(fileName || filePath.split(/[\\/]/).pop());
-
-    // Update tree selection
-    document.querySelectorAll('.tree-item.active').forEach(el => el.classList.remove('active'));
-    const treeItem = document.querySelector(`.tree-item[data-path="${CSS.escape(filePath)}"]`);
-    if (treeItem) treeItem.classList.add('active');
-
-    // Update status bar
-    document.getElementById('status-file').textContent = filePath;
-    document.getElementById('btn-save').disabled = isImage;
+    updateTabBar();
+    updateTreeSelection();
+    updateStatusBar();
+    persistTabs();
 
     // Trigger render only if it's a puml file
+    const ext = getFileExtension(tab.path);
     const pumlExts = ['puml', 'plantuml', 'pu', 'wsd'];
-    if (!isImage && pumlExts.includes(ext)) {
-      scheduleRender(300);
+    if (!tab.isImage && pumlExts.includes(ext)) {
+      renderPreview(false);
+    } else if (!tab.isImage) {
+      hidePreview();
     }
   }
 
-  async function saveCurrentFile() {
-    if (!state.currentFile) return;
-    const content = getEditorContent();
-    const result = await window.electronAPI.writeFile(state.currentFile, content);
+  async function closeTab(index) {
+    if (index < 0 || index >= state.tabs.length) return;
+    
+    const tab = state.tabs[index];
+    if (tab.isModified) {
+      const confirm = await showConfirm(
+        'Save Changes?',
+        `Do you want to save changes to "${tab.name}" before closing?`,
+        'Save',
+        'btn-primary'
+      );
+      if (confirm) await saveTab(index);
+    }
+
+    state.tabs.splice(index, 1);
+    
+    if (state.tabs.length === 0) {
+      state.activeTabIndex = -1;
+      if (state.editorView) state.editorView.dom.style.display = 'none';
+      document.getElementById('editor-empty').classList.remove('hidden');
+      document.getElementById('editor-empty').innerHTML = '<div class="empty-state"><p>Select a file from the explorer to start editing</p></div>';
+      hidePreview();
+    } else {
+      if (state.activeTabIndex >= state.tabs.length) {
+        state.activeTabIndex = state.tabs.length - 1;
+      }
+      switchTab(state.activeTabIndex);
+    }
+
+    updateTabBar();
+    updateTreeSelection();
+    updateStatusBar();
+    persistTabs();
+  }
+
+  function makeTabPermanentByPath(path) {
+    const index = state.tabs.findIndex(t => t.path === path);
+    if (index !== -1) {
+      state.tabs[index].isPermanent = true;
+      updateTabBar();
+      persistTabs();
+    } else {
+      openFile(path, null, true);
+    }
+  }
+
+  function persistTabs() {
+    const openFiles = state.tabs.filter(t => t.isPermanent).map(t => t.path);
+    window.electronAPI.setConfig('openFiles', openFiles);
+    const activeTab = getActiveTab();
+    if (activeTab && activeTab.isPermanent) {
+      window.electronAPI.setConfig('activeFile', activeTab.path);
+    } else {
+      window.electronAPI.setConfig('activeFile', null);
+    }
+  }
+
+  function updateTreeSelection() {
+    document.querySelectorAll('.tree-item.active').forEach(el => el.classList.remove('active'));
+    const activeTab = getActiveTab();
+    if (activeTab) {
+      const treeItem = document.querySelector(`.tree-item[data-path="${CSS.escape(activeTab.path)}"]`);
+      if (treeItem) treeItem.classList.add('active');
+    }
+  }
+
+  function updateStatusBar() {
+    const activeTab = getActiveTab();
+    if (activeTab) {
+      document.getElementById('status-file').textContent = activeTab.path;
+      document.getElementById('btn-save').disabled = activeTab.isImage;
+      const modifiedBadge = document.getElementById('status-modified');
+      if (activeTab.isModified) {
+        modifiedBadge.classList.remove('hidden');
+      } else {
+        modifiedBadge.classList.add('hidden');
+      }
+    } else {
+      document.getElementById('status-file').textContent = 'No file';
+      document.getElementById('btn-save').disabled = true;
+      document.getElementById('status-modified').classList.add('hidden');
+    }
+  }
+
+  async function saveTab(index) {
+    if (index < 0 || index >= state.tabs.length) return;
+    const tab = state.tabs[index];
+    if (tab.isImage) return;
+
+    const result = await window.electronAPI.writeFile(tab.path, tab.content);
     if (result.success) {
-      setModified(false);
+      tab.isModified = false;
+      updateTabBar();
+      updateStatusBar();
       showToast('File saved', 'success');
     } else {
       showToast('Failed to save: ' + result.error, 'error');
     }
   }
 
-  function setModified(modified) {
-    state.isModified = modified;
-    const badge = document.getElementById('status-modified');
-    const tab = document.querySelector('.tab.active');
-    if (modified) {
-      badge?.classList.remove('hidden');
-      tab?.classList.add('modified');
-    } else {
-      badge?.classList.add('hidden');
-      tab?.classList.remove('modified');
+  async function saveCurrentFile() {
+    if (state.activeTabIndex !== -1) {
+      await saveTab(state.activeTabIndex);
     }
   }
 
-  function updateTabBar(fileName) {
-    document.getElementById('tab-bar').innerHTML = `
-      <div class="tab active">
-        <span class="tab-name">${escapeHtml(fileName)}</span>
-      </div>
-    `;
+  function updateTabBar() {
+    const tabBar = document.getElementById('tab-bar');
+    if (state.tabs.length === 0) {
+      tabBar.innerHTML = '<div class="tab-empty">No file open</div>';
+      return;
+    }
+
+    tabBar.innerHTML = '';
+    state.tabs.forEach((tab, index) => {
+      const tabEl = document.createElement('div');
+      tabEl.className = 'tab';
+      if (index === state.activeTabIndex) tabEl.classList.add('active');
+      if (!tab.isPermanent) tabEl.classList.add('temporary');
+      if (tab.isModified) tabEl.classList.add('modified');
+
+      tabEl.innerHTML = `
+        <span class="tab-name">${escapeHtml(tab.name)}</span>
+        <div class="tab-close">
+          <svg width="10" height="10" viewBox="0 0 12 12"><path d="M1 1l10 10M11 1L1 11" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+        </div>
+      `;
+
+      tabEl.addEventListener('click', (e) => {
+        if (e.target.closest('.tab-close')) {
+          closeTab(index);
+        } else {
+          switchTab(index);
+        }
+      });
+      
+      tabEl.addEventListener('dblclick', () => {
+        tab.isPermanent = true;
+        updateTabBar();
+        persistTabs();
+      });
+
+      tabBar.appendChild(tabEl);
+    });
   }
 
   function showContextMenu(e, path, type) {
@@ -909,12 +1126,26 @@
 
       if (result.success) {
         // If the deleted file was open, clear the editor
-        if (state.currentFile === path) {
-          state.currentFile = null;
-          if (state.editorView) state.editorView.dom.style.display = 'none';
-          document.getElementById('editor-empty').classList.remove('hidden');
-          document.getElementById('editor-empty').innerHTML = '<div class="empty-state"><p>No file open</p></div>';
-          hidePreview();
+        // If the deleted file was open, close its tab
+        const index = state.tabs.findIndex(t => t.path === path);
+        if (index !== -1) {
+          state.tabs.splice(index, 1);
+          if (state.tabs.length === 0) {
+            state.activeTabIndex = -1;
+            if (state.editorView) state.editorView.dom.style.display = 'none';
+            document.getElementById('editor-empty').classList.remove('hidden');
+            document.getElementById('editor-empty').innerHTML = '<div class="empty-state"><p>No file open</p></div>';
+            hidePreview();
+          } else {
+            if (state.activeTabIndex >= state.tabs.length) {
+              state.activeTabIndex = state.tabs.length - 1;
+            }
+            switchTab(state.activeTabIndex);
+          }
+          updateTabBar();
+          updateTreeSelection();
+          updateStatusBar();
+          persistTabs();
         }
         await refreshFolder();
         showToast('Item deleted', 'success');
@@ -933,15 +1164,16 @@
   }
 
   async function renderPreview(force = false) {
-    if (!state.currentFile || state.isImageMode) return;
-    const ext = getFileExtension(state.currentFile);
+    const activeTab = getActiveTab();
+    if (!activeTab || activeTab.isImage) return;
+    const ext = getFileExtension(activeTab.path);
     const pumlExts = ['puml', 'plantuml', 'pu', 'wsd'];
     if (!pumlExts.includes(ext)) {
       hidePreview();
       return;
     }
 
-    const source = getEditorContent();
+    const source = activeTab.content;
     if (!source.trim()) { hidePreview(); return; }
 
     if (!force && source === state.lastRenderedSource && state.previewImageData) return;
@@ -950,7 +1182,7 @@
     updateRenderStatus('Rendering...');
     showPreviewLoading();
 
-    const cwd = getFileDirectory(state.currentFile);
+    const cwd = getFileDirectory(activeTab.path);
     const result = await window.electronAPI.renderPlantUML(source, 'svg', cwd);
 
     state.isRendering = false;
@@ -972,10 +1204,11 @@
     const empty = document.getElementById('preview-empty');
 
     img.onload = () => {
-      // Only reset pan/zoom if the file itself changed
-      if (state.currentFile !== state._currentFileForZoom) {
+      // Only reset pan/zoom if the image itself changed
+      const activeTab = getActiveTab();
+      if (activeTab && activeTab.path !== state._currentFileForZoom) {
         resetPanZoom();
-        state._currentFileForZoom = state.currentFile;
+        state._currentFileForZoom = activeTab.path;
       }
       updatePreviewTransform();
     };
@@ -1037,12 +1270,12 @@
       showToast('No image to copy', 'error');
       return;
     }
-    const source = getEditorContent();
-    if (!source.trim()) return;
+    const activeTab = getActiveTab();
+    if (!activeTab || activeTab.isImage) return;
 
     updateRenderStatus('Copying...');
-    const cwd = getFileDirectory(state.currentFile);
-    const result = await window.electronAPI.renderPlantUML(source, 'png', cwd);
+    const cwd = getFileDirectory(activeTab.path);
+    const result = await window.electronAPI.renderPlantUML(activeTab.content, 'png', cwd);
     if (result.success) {
       const copyResult = await window.electronAPI.copyImageToClipboard(result.data);
       if (copyResult.success) {
@@ -1057,20 +1290,21 @@
   }
 
   async function exportDiagram() {
-    const source = getEditorContent();
-    if (!source.trim()) { showToast('No diagram to export', 'error'); return; }
+    const activeTab = getActiveTab();
+    if (!activeTab || activeTab.isImage || !activeTab.content.trim()) { 
+      showToast('No diagram to export', 'error'); 
+      return; 
+    }
 
     const format = state.config.exportFormat || 'png';
-    const defaultName = state.currentFile
-      ? state.currentFile.split(/[\\/]/).pop().replace(/\.\w+$/, '') + '.' + format
-      : 'diagram.' + format;
+    const defaultName = activeTab.name.replace(/\.\w+$/, '') + '.' + format;
 
     const savePath = await window.electronAPI.saveFileDialog(defaultName, format);
     if (!savePath) return;
 
     updateRenderStatus('Exporting...');
-    const cwd = getFileDirectory(state.currentFile);
-    const result = await window.electronAPI.exportDiagram(source, format, savePath, cwd);
+    const cwd = getFileDirectory(activeTab.path);
+    const result = await window.electronAPI.exportDiagram(activeTab.content, format, savePath, cwd);
 
     if (result.success) {
       showToast(`Exported to ${savePath}`, 'success');

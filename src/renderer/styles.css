@@ -394,8 +394,8 @@ html, body {
 .tab {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 14px;
+  gap: 8px;
+  padding: 0 12px;
   height: var(--panel-header-height);
   font-size: 12px;
   color: var(--text-secondary);
@@ -404,6 +404,7 @@ html, body {
   transition: background var(--transition-fast), color var(--transition-fast);
   white-space: nowrap;
   position: relative;
+  user-select: none;
 }
 .tab:hover {
   background: var(--bg-hover);
@@ -416,15 +417,57 @@ html, body {
 .tab.active::after {
   content: '';
   position: absolute;
-  bottom: 0;
+  top: 0;
   left: 0;
   right: 0;
   height: 2px;
   background: var(--accent);
 }
-.tab.modified .tab-name::after {
-  content: ' ●';
-  color: var(--warning);
+.tab.temporary .tab-name {
+  font-style: italic;
+}
+.tab-name {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tab-close {
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  margin-right: -4px;
+  opacity: 0;
+  transition: opacity var(--transition-fast), background var(--transition-fast);
+}
+.tab:hover .tab-close, .tab.active .tab-close {
+  opacity: 0.7;
+}
+.tab.modified .tab-close {
+  opacity: 1;
+}
+.tab-close:hover {
+  background: var(--bg-elevated);
+  opacity: 1 !important;
+}
+.tab.modified .tab-close::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  position: absolute;
+}
+.tab.modified:hover .tab-close::before {
+  display: none;
+}
+.tab.modified .tab-close svg {
+  display: none;
+}
+.tab.modified:hover .tab-close svg {
+  display: block;
 }
 
 #editor-container {
