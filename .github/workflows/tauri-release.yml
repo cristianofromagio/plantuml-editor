@@ -1,6 +1,7 @@
 name: Build & Draft release
 
 on:
+  workflow_dispatch: {}
   push:
     tags:
       - "v*"
@@ -15,6 +16,16 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # required to fetch tags
+
+      - name: Get latest tag
+        id: get_tag
+        shell: bash
+        run: |
+          git fetch --tags
+          TAG=$(git describe --tags --abbrev=0)
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -36,8 +47,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: app-v__VERSION__
-          releaseName: 'App v__VERSION__'
+          tagName: ${{ steps.get_tag.outputs.tag }}
+          releaseName: 'App ${{ steps.get_tag.outputs.tag }}'
           releaseBody: 'See the assets to download this version and install.'
           releaseDraft: true
           prerelease: false
