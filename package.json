@@ -6,6 +6,7 @@
     "start": "tauri dev",
     "bundle": "npx esbuild src/editor/editor-entry.js --bundle --minify --format=iife --outfile=src/renderer/editor-bundle.js",
     "build": "tauri build",
+    "tauri": "tauri",
     "test": "npx playwright test"
   },
   "author": "Cristiano Fromagio",
