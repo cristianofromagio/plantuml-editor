@@ -8,7 +8,7 @@
     "build": "tauri build",
     "test": "npx playwright test"
   },
-  "author": "PlantUML Editor",
+  "author": "Cristiano Fromagio",
   "license": "MIT",
   "devDependencies": {
     "@playwright/test": "^1.58.2",

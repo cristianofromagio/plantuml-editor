@@ -115,6 +115,8 @@
   document.getElementById('btn-toggle-wrap').addEventListener('click', () => toggleTextWrap());
   document.getElementById('btn-render-now').addEventListener('click', () => renderPreview(true));
   document.getElementById('btn-save').addEventListener('click', saveCurrentFile);
+  document.getElementById('btn-tab-left').addEventListener('click', () => moveTabLeft());
+  document.getElementById('btn-tab-right').addEventListener('click', () => moveTabRight());
 
   // Settings modal
   document.getElementById('btn-close-settings').addEventListener('click', closeSettings);
@@ -275,18 +277,18 @@
         const exists = await window.electronAPI.fileExists(state.config.lastOpenedFolder);
         if (exists) {
           await openFolder(state.config.lastOpenedFolder);
-          
+
           if (state.config.openFiles && Array.isArray(state.config.openFiles)) {
-             for (const filePath of state.config.openFiles) {
-                const fileExists = await window.electronAPI.fileExists(filePath);
-                if (fileExists) {
-                  await openFile(filePath, null, true); // Open as permanent
-                }
-             }
-             if (state.config.activeFile) {
-                const index = state.tabs.findIndex(t => t.path === state.config.activeFile);
-                if (index !== -1) switchTab(index);
-             }
+            for (const filePath of state.config.openFiles) {
+              const fileExists = await window.electronAPI.fileExists(filePath);
+              if (fileExists) {
+                await openFile(filePath, null, true); // Open as permanent
+              }
+            }
+            if (state.config.activeFile) {
+              const index = state.tabs.findIndex(t => t.path === state.config.activeFile);
+              if (index !== -1) switchTab(index);
+            }
           } else if (state.config.lastOpenedFile) {
             // Legacy support
             const fileExists = await window.electronAPI.fileExists(state.config.lastOpenedFile);
@@ -581,7 +583,7 @@
           <span class="tree-item-icon">${getFileIcon(ext)}</span>
           <span class="tree-item-name">${escapeHtml(item.name)}</span>
         `;
-        
+
         fileEl.addEventListener('click', () => openFile(item.path, item.name, false));
         fileEl.addEventListener('dblclick', () => makeTabPermanentByPath(item.path));
         fileEl.addEventListener('contextmenu', (e) => {
@@ -689,7 +691,7 @@
 
   function switchTab(index) {
     if (index < 0 || index >= state.tabs.length) return;
-    
+
     // Save current tab state if switching
     const prevTab = getActiveTab();
     if (prevTab && !prevTab.isImage && state.editorView) {
@@ -718,7 +720,7 @@
       if (state.editorView) {
         state.editorView.dom.style.display = '';
         setEditorContent(tab.content);
-        
+
         // Restore scroll and cursor
         if (tab.scrollState !== null) {
           setTimeout(() => {
@@ -768,7 +770,7 @@
 
   async function closeTab(index) {
     if (index < 0 || index >= state.tabs.length) return;
-    
+
     const tab = state.tabs[index];
     if (tab.isModified) {
       const confirm = await showConfirm(
@@ -781,7 +783,7 @@
     }
 
     state.tabs.splice(index, 1);
-    
+
     if (state.tabs.length === 0) {
       state.activeTabIndex = -1;
       if (state.editorView) state.editorView.dom.style.display = 'none';
@@ -798,6 +800,24 @@
     updateTabBar();
     updateTreeSelection();
     updateStatusBar();
+    persistTabs();
+  }
+
+  function moveTabLeft() {
+    if (state.activeTabIndex <= 0 || state.tabs.length <= 1) return;
+    const tab = state.tabs.splice(state.activeTabIndex, 1)[0];
+    state.activeTabIndex--;
+    state.tabs.splice(state.activeTabIndex, 0, tab);
+    updateTabBar();
+    persistTabs();
+  }
+
+  function moveTabRight() {
+    if (state.activeTabIndex === -1 || state.activeTabIndex >= state.tabs.length - 1 || state.tabs.length <= 1) return;
+    const tab = state.tabs.splice(state.activeTabIndex, 1)[0];
+    state.activeTabIndex++;
+    state.tabs.splice(state.activeTabIndex, 0, tab);
+    updateTabBar();
     persistTabs();
   }
 
@@ -874,10 +894,18 @@
 
   function updateTabBar() {
     const tabBar = document.getElementById('tab-bar');
+    const btnLeft = document.getElementById('btn-tab-left');
+    const btnRight = document.getElementById('btn-tab-right');
+    
     if (state.tabs.length === 0) {
       tabBar.innerHTML = '<div class="tab-empty">No file open</div>';
+      if (btnLeft) btnLeft.disabled = true;
+      if (btnRight) btnRight.disabled = true;
       return;
     }
+
+    if (btnLeft) btnLeft.disabled = state.activeTabIndex <= 0;
+    if (btnRight) btnRight.disabled = state.activeTabIndex >= state.tabs.length - 1;
 
     tabBar.innerHTML = '';
     state.tabs.forEach((tab, index) => {
@@ -901,7 +929,7 @@
           switchTab(index);
         }
       });
-      
+
       tabEl.addEventListener('dblclick', () => {
         tab.isPermanent = true;
         updateTabBar();
@@ -1084,7 +1112,7 @@
     if (!path) return;
     const oldName = path.split(/[\\/]/).pop();
     const newName = await showPrompt('Rename', 'Enter new name', oldName);
-    
+
     if (!newName || !newName.trim() || newName === oldName) return;
 
     const parentDir = getFileDirectory(path);
@@ -1120,7 +1148,7 @@
     );
 
     if (confirmed) {
-      const result = type === 'directory' 
+      const result = type === 'directory'
         ? await window.electronAPI.removeDirectory(path)
         : await window.electronAPI.removeFile(path);
 
@@ -1291,9 +1319,9 @@
 
   async function exportDiagram() {
     const activeTab = getActiveTab();
-    if (!activeTab || activeTab.isImage || !activeTab.content.trim()) { 
-      showToast('No diagram to export', 'error'); 
-      return; 
+    if (!activeTab || activeTab.isImage || !activeTab.content.trim()) {
+      showToast('No diagram to export', 'error');
+      return;
     }
 
     const format = state.config.exportFormat || 'png';
