@@ -1,0 +1,126 @@
+    Checking webview2-com v0.38.2
+   Compiling app v0.1.0 (C:\Users\Cristiano\Development\_experiments\plantuml-editor\src-tauri)
+    Checking wry v0.54.4
+    Checking tauri-runtime v2.10.1
+    Checking tauri-runtime-wry v2.10.1
+    Checking tauri v2.10.3
+    Checking tauri-plugin-fs v2.4.5
+    Checking tauri-plugin-shell v2.3.5
+    Checking tauri-plugin-clipboard-manager v2.3.2
+    Checking tauri-plugin-log v2.8.0
+    Checking tauri-plugin-os v2.3.2
+    Checking tauri-plugin-dialog v2.6.0
+error[E0432]: unresolved import `tauri_plugin_clipboard_manager::ClipKind`
+  --> src\lib.rs:13:5
+   |
+13 | use tauri_plugin_clipboard_manager::ClipKind;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no `ClipKind` in the root
+
+error[E0597]: `state` does not live long enough
+   --> src\lib.rs:331:9
+    |
+330 |         let state = app.state::<AppState>();
+    |             ----- binding `state` declared here
+331 |         state.config.lock().unwrap().get("exportFormat")
+    |         ^^^^^-----------------------
+    |         |
+    |         borrowed value does not live long enough
+    |         a temporary with access to the borrow is created here ...
+...
+335 |     });
+    |     -
+    |     |
+    |     `state` dropped here while still borrowed
+    |     ... and the borrow might be used here, when that temporary is dropped and runs the `Drop` code for type `std::sync::MutexGuard`
+    |
+    = note: the temporary is part of an expression at the end of a block;
+            consider forcing this temporary to be dropped sooner, before the block's local variables are dropped
+help: for example, you could save the expression's value in a new local variable `x` and then make `x` be the expression at the end of the block
+    |
+331 ~         let x = state.config.lock().unwrap().get("exportFormat")
+332 |             .and_then(|v| v.as_str())
+333 |             .unwrap_or("png")
+334 ~             .to_string(); x
+    |
+
+error[E0597]: `state` does not live long enough
+   --> src\lib.rs:339:9
+    |
+338 |         let state = app.state::<AppState>();
+    |             ----- binding `state` declared here
+339 |         state.config.lock().unwrap().get("commandArgs")
+    |         ^^^^^-----------------------
+    |         |
+    |         borrowed value does not live long enough
+    |         a temporary with access to the borrow is created here ...
+...
+343 |     };
+    |     -- ... and the borrow might be used here, when that temporary is dropped and runs the `Drop` code for type `std::sync::MutexGuard`
+    |     |
+    |     `state` dropped here while still borrowed
+    |
+    = note: the temporary is part of an expression at the end of a block;
+            consider forcing this temporary to be dropped sooner, before the block's local variables are dropped
+help: for example, you could save the expression's value in a new local variable `x` and then make `x` be the expression at the end of the block
+    |
+339 ~         let x = state.config.lock().unwrap().get("commandArgs")
+340 |             .and_then(|v| v.as_str())
+341 |             .unwrap_or("")
+342 ~             .to_string(); x
+    |
+
+error[E0597]: `state` does not live long enough
+   --> src\lib.rs:389:9
+    |
+388 |         let state = app.state::<AppState>();
+    |             ----- binding `state` declared here
+389 |         state.config.lock().unwrap().get("commandArgs")
+    |         ^^^^^-----------------------
+    |         |
+    |         borrowed value does not live long enough
+    |         a temporary with access to the borrow is created here ...
+...
+393 |     };
+    |     -- ... and the borrow might be used here, when that temporary is dropped and runs the `Drop` code for type `std::sync::MutexGuard`
+    |     |
+    |     `state` dropped here while still borrowed
+    |
+    = note: the temporary is part of an expression at the end of a block;
+            consider forcing this temporary to be dropped sooner, before the block's local variables are dropped
+help: for example, you could save the expression's value in a new local variable `x` and then make `x` be the expression at the end of the block
+    |
+389 ~         let x = state.config.lock().unwrap().get("commandArgs")
+390 |             .and_then(|v| v.as_str())
+391 |             .unwrap_or("")
+392 ~             .to_string(); x
+    |
+
+error[E0599]: no function or associated item named `from_bytes` found for struct `tauri::image::Image<'a>` in the current scope
+   --> src\lib.rs:491:51
+    |
+491 |             if let Ok(img) = tauri::image::Image::from_bytes(&data) {
+    |                                                   ^^^^^^^^^^ function or associated item not found in `tauri::image::Image<'_>`
+    |
+note: if you're trying to build a new `tauri::image::Image<'_>` consider using one of the following associated functions:
+      tauri::image::Image::<'static>::new_owned
+      tauri::image::Image::<'a>::new
+   --> C:\Users\Cristiano\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-2.10.3\src\image\mod.rs:52:3
+    |
+ 52 |   pub const fn new_owned(rgba: Vec<u8>, width: u32, height: u32) -> Self {
+    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+ 63 |   pub const fn new(rgba: &'a [u8], width: u32, height: u32) -> Self {
+    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated method `tauri_plugin_shell::Shell::<R>::open`: Use tauri-plugin-opener instead.
+   --> src\lib.rs:508:29
+    |
+508 |         let _ = app.shell().open(file_path, None);
+    |                             ^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+Some errors have detailed explanations: E0432, E0597, E0599.
+For more information about an error, try `rustc --explain E0432`.
+warning: `app` (lib) generated 1 warning
+error: could not compile `app` (lib) due to 5 previous errors; 1 warning emitted
