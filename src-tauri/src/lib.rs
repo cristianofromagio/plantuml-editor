@@ -2,7 +2,10 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::io::Write;
+
 use tauri::{AppHandle, Manager, Window};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_shell::ShellExt;
@@ -15,6 +18,9 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 struct AppState {
     config: Mutex<HashMap<String, serde_json::Value>>,
 }
+
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 
 // ---- Window Controls ----
 #[tauri::command]
@@ -307,15 +313,31 @@ fn get_plantuml_args(app: &AppHandle, format: &str, extra_args: &str) -> (String
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .unwrap_or_else(|| {
-            let mut p = app.path().resource_dir().unwrap_or_default().join("plantuml.jar");
-            if !p.exists() {
+            let res_dir = app.path().resource_dir().unwrap_or_default();
+            let p1 = res_dir.join("resources/plantuml.jar");
+            let p2 = res_dir.join("plantuml.jar");
+            let p3 = res_dir.join("_up_/resources/plantuml.jar");
+            
+            let mut jar_str = if p1.exists() { p1.to_string_lossy().into_owned() }
+            else if p2.exists() { p2.to_string_lossy().into_owned() }
+            else if p3.exists() { p3.to_string_lossy().into_owned() }
+            else {
                 // fallback for development mode
-                if let Ok(cp) = std::fs::canonicalize("../resources/plantuml.jar") {
-                    p = cp;
-                }
+                std::fs::canonicalize("../resources/plantuml.jar")
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_else(|_| "plantuml.jar".to_string())
+            };
+            
+            #[cfg(windows)]
+            if jar_str.starts_with("\\\\?\\") {
+                jar_str = jar_str[4..].to_string();
             }
-            p.to_string_lossy().into_owned()
+            
+            jar_str
         });
+
+
+
         
     let limit_size = config.get("plantumlLimitSize")
         .and_then(|v| v.as_i64())
@@ -375,6 +397,10 @@ async fn plantuml_render(app: AppHandle, source: String, format: Option<String>,
            .stdout(Stdio::piped())
            .stderr(Stdio::piped());
            
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+
+           
     if let Some(c) = cwd {
         if !c.is_empty() {
             command.current_dir(c);
@@ -425,6 +451,10 @@ async fn plantuml_export(app: AppHandle, source: String, format: String, output_
            .stdin(Stdio::piped())
            .stdout(Stdio::piped())
            .stderr(Stdio::piped());
+           
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+
            
     if let Some(c) = cwd {
         if !c.is_empty() {
